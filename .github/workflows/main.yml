@@ -1,23 +1,44 @@
-name: build-from-zip
+name: build-ios
 on:
   push:
     paths: ['*.zip']
   workflow_dispatch:
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  ios:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Unzip
         run: unzip -q baldi-rs.zip -d work
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: work/baldi-rs
-      - name: Build
+      - name: Build Rust (iOS static lib)
         working-directory: work/baldi-rs
-        run: cargo build --release 2>&1 | tee ../../build.log
+        run: cargo build --release --target aarch64-apple-ios --lib 2>&1 | tee ../../build.log
+      - name: Package unsigned IPA
+        working-directory: work/baldi-rs
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          mkdir -p Payload/Baldi.app
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=14.0 \
+            ios/main.m target/aarch64-apple-ios/release/libbaldi_rs.a \
+            -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
+            -framework Metal -framework MetalKit -framework AudioToolbox -framework CoreAudio \
+            -framework AVFoundation -framework CoreFoundation -framework Security \
+            -framework CoreMedia -framework CoreMotion -framework CoreText -framework CoreVideo \
+            -framework GameController -framework IOKit -framework OpenGLES \
+            -lc++ -lresolv -lobjc \
+            -o Payload/Baldi.app/Baldi 2>&1 | tee -a ../../build.log
+          cp ios/Info.plist Payload/Baldi.app/Info.plist
+          zip -qr ../../Baldi.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Baldi-ipa
+          path: Baldi.ipa
       - uses: actions/upload-artifact@v4
         if: always()
         with:
