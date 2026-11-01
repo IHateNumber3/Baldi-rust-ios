@@ -1,8 +1,7 @@
 name: build-ios
 on:
-  push:
-    paths: ['*.zip']
   workflow_dispatch:
+  
 jobs:
   ios:
     runs-on: macos-latest
