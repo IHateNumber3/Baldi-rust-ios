@@ -1,45 +1,48 @@
-name: build-ios
+
+name: Build Baldi Rust for iOS
+
 on:
   workflow_dispatch:
-  
+
 jobs:
-  ios:
-    runs-on: macos-latest
+  build:
+    runs-on: macos-14
+
     steps:
       - uses: actions/checkout@v4
-      - name: Unzip
-        run: unzip -q baldi-rs.zip -d work
+
+      - name: Extract project
+        run: |
+          unzip -q baldi-rs.zip -d work
+          PROJECT=$(find work -name Cargo.toml -print -quit)
+          test -n "$PROJECT"
+          echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
+
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: work/baldi-rs
-      - name: Build Rust (iOS static lib)
-        working-directory: work/baldi-rs
-        run: cargo build --release --target aarch64-apple-ios --lib 2>&1 | tee ../../build.log
-      - name: Package unsigned IPA
-        working-directory: work/baldi-rs
+          workspaces: work
+
+      - name: Check Rust
         run: |
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          mkdir -p Payload/Baldi.app
-          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=14.0 \
-            ios/main.m target/aarch64-apple-ios/release/libbaldi_rs.a \
-            -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
-            -framework Metal -framework MetalKit -framework AudioToolbox -framework CoreAudio \
-            -framework AVFoundation -framework CoreFoundation -framework Security \
-            -framework CoreMedia -framework CoreMotion -framework CoreText -framework CoreVideo \
-            -framework GameController -framework IOKit -framework OpenGLES \
-            -lc++ -lresolv -lobjc \
-            -o Payload/Baldi.app/Baldi 2>&1 | tee -a ../../build.log
-          cp ios/Info.plist Payload/Baldi.app/Info.plist
-          zip -qr ../../Baldi.ipa Payload
-      - uses: actions/upload-artifact@v4
+          cd "$PROJECT_DIR"
+          cargo check
+          cargo test
+
+      - name: Build for iPhone
+        run: |
+          cd "$PROJECT_DIR"
+          set -o pipefail
+          cargo build --release --target aarch64-apple-ios --lib \
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Upload Rust build
+        uses: actions/upload-artifact@v4
         with:
-          name: Baldi-ipa
-          path: Baldi.ipa
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: build-log
-          path: build.log
+          name: baldi-rust-ios
+          path: |
+            ${{ env.PROJECT_DIR }}/target/aarch64-apple-ios/release/
+            build.log
