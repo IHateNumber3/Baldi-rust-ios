@@ -26,6 +26,9 @@ jobs:
         with:
           workspaces: work
 
+      - name: Clear build cache
+        run: cargo clean
+
       - name: Check Rust
         run: |
           cd "$PROJECT_DIR"
