@@ -9,6 +9,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+            - name: Extract project
+              run: |
+                  set -euxo pipefail
+
+                   test -f baldi-rs.zip
+                   unzip -tq baldi-rs.zip
+                   mkdir -p work
+                   unzip -q baldi-rs.zip -d work
+
+                   PROJECT=$(find work -type f -name Cargo.toml -print -quit)
+
+                   if [ -z "$PROJECT" ]; then
+                     echo "Cargo.toml not found!"
+                     find work -maxdepth 4 -type f
+                   exit 1
+                   fi
+
+                   echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
+                   echo "Found project: $PROJECT"
+
       - name: Locate project
         run: |
           PROJECT=$(find . -name Cargo.toml -print -quit)
