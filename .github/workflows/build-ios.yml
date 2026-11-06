@@ -1,0 +1,65 @@
+name: Build Baldi Rust IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate project
+        run: |
+          PROJECT=$(find . -name Cargo.toml -print -quit)
+          test -n "$PROJECT"
+          echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
+
+      - name: Install Rust and XcodeGen
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build Rust static library
+        run: |
+          cd "$PROJECT_DIR"
+          cargo check --lib
+          cargo test --lib
+          cargo build --release --target aarch64-apple-ios --lib
+
+      - name: Generate and build iOS app
+        run: |
+          mkdir -p "$PROJECT_DIR/ios-host/Frameworks"
+          cp "$PROJECT_DIR/target/aarch64-apple-ios/release/libbaldi_plus_rust.a" \
+             "$PROJECT_DIR/ios-host/Frameworks/libbaldi_plus_rust.a"
+          cd "$PROJECT_DIR/ios-host"
+          xcodegen generate
+          xcodebuild \
+            -project Baldi.xcodeproj \
+            -scheme Baldi \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package IPA
+        run: |
+          APP="$PROJECT_DIR/ios-host/build/DerivedData/Build/Products/Release-iphoneos/Baldi.app"
+          test -d "$APP"
+          mkdir -p "$GITHUB_WORKSPACE/ipa/Payload"
+          cp -R "$APP" "$GITHUB_WORKSPACE/ipa/Payload/Baldi.app"
+          cd "$GITHUB_WORKSPACE/ipa"
+          zip -qry "$GITHUB_WORKSPACE/Baldi.ipa" Payload
+
+      - name: Upload IPA and app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Baldi-iOS-build
+          path: |
+            Baldi.ipa
+            ${{ env.PROJECT_DIR }}/ios-host/build/DerivedData/Build/Products/Release-iphoneos/Baldi.app
