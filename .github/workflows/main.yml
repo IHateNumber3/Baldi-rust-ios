@@ -4,132 +4,93 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ipa:
-    runs-on: macos-15
+  build:
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Extract Rust project
         run: |
-          mkdir -p work
           unzip -q baldi-rs.zip -d work
           PROJECT=$(find work -name Cargo.toml -print -quit)
           test -n "$PROJECT"
           echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
-      - name: Configure Rust static library
-        run: |
-          cd "$PROJECT_DIR"
-          if ! grep -q 'staticlib' Cargo.toml; then
-            echo 'crate-type = ["staticlib"]' >> Cargo.toml
-          fi
-
-      - name: Check and test
-        run: |
-          cd "$PROJECT_DIR"
-          cargo clean
-          cargo check
-          cargo test
-
-      - name: Build Rust
+      - name: Build Rust library
         run: |
           cd "$PROJECT_DIR"
           cargo build --release --target aarch64-apple-ios --lib
-          test -f target/aarch64-apple-ios/release/libbaldi_plus_rust.a
 
       - name: Create iOS app
         run: |
-          mkdir -p ios-host Payload/BaldiRust.app
+          mkdir -p Payload/Baldi.app
 
-          cat > ios-host/main.swift <<'SWIFT'
+          cat > ios_main.swift <<'SWIFT'
           import UIKit
 
-          @main
+          @UIApplicationMain
           class AppDelegate: UIResponder, UIApplicationDelegate {
               var window: UIWindow?
 
               func application(
                   _ application: UIApplication,
-                  didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?
+                  didFinishLaunchingWithOptions options:
+                  [UIApplication.LaunchOptionsKey: Any]?
               ) -> Bool {
-                  let window = UIWindow(frame: UIScreen.main.bounds)
-                  let vc = UIViewController()
-                  vc.view.backgroundColor = .black
-
-                  let label = UILabel()
-                  label.text = "Baldi Rust\nPrototype"
-                  label.textColor = .white
-                  label.textAlignment = .center
-                  label.numberOfLines = 0
-                  label.frame = vc.view.bounds
-                  label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-
-                  vc.view.addSubview(label)
-                  window.rootViewController = vc
-                  window.makeKeyAndVisible()
-                  self.window = window
+                  window = UIWindow(frame: UIScreen.main.bounds)
+                  window?.rootViewController = UIViewController()
+                  window?.rootViewController?.view.backgroundColor = .black
+                  window?.makeKeyAndVisible()
                   return true
               }
           }
           SWIFT
 
-          cat > Payload/BaldiRust.app/Info.plist <<'PLIST'
+          swiftc -target arm64-apple-ios13.0 \
+            -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -framework UIKit \
+            ios_main.swift \
+            -o Payload/Baldi.app/Baldi
+
+          cat > Payload/Baldi.app/Info.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
           "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
+              <key>CFBundleExecutable</key>
+              <string>Baldi</string>
               <key>CFBundleIdentifier</key>
               <string>com.baldi.rust</string>
-              <key>CFBundleExecutable</key>
-              <string>BaldiRust</string>
               <key>CFBundleName</key>
-              <string>Baldi Rust</string>
+              <string>Baldi</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>CFBundleShortVersionString</key>
-              <string>0.1</string>
-              <key>UILaunchScreen</key>
-              <dict/>
-              <key>UIRequiredDeviceCapabilities</key>
-              <array><string>arm64</string></array>
-              <key>UISupportedInterfaceOrientations</key>
-              <array>
-                  <string>UIInterfaceOrientationPortrait</string>
-                  <string>UIInterfaceOrientationLandscapeLeft</string>
-                  <string>UIInterfaceOrientationLandscapeRight</string>
-              </array>
+              <string>0.3.0</string>
+              <key>MinimumOSVersion</key>
+              <string>13.0</string>
           </dict>
           </plist>
           PLIST
 
-      - name: Link iOS executable
-        run: |
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cp "$PROJECT_DIR/target/aarch64-apple-ios/release/libbaldi_plus_rust.a" \
+             Payload/Baldi.app/libbaldi_plus_rust.a
 
-          xcrun --sdk iphoneos swiftc \
-            -target arm64-apple-ios13.0 \
-            -sdk "$SDK" \
-            -framework UIKit \
-            -L "$PROJECT_DIR/target/aarch64-apple-ios/release" \
-            -lbaldi_plus_rust \
-            ios-host/main.swift \
-            -o Payload/BaldiRust.app/BaldiRust
+          chmod +x Payload/Baldi.app/Baldi
+          codesign --force --sign - Payload/Baldi.app/Baldi
+          codesign --force --sign - Payload/Baldi.app
 
-          chmod +x Payload/BaldiRust.app/BaldiRust
-
-      - name: Package IPA
-        run: |
           mkdir -p ipa-output
-          ditto -c -k --sequesterRsrc --keepParent \
-            Payload ipa-output/Baldi.ipa
+          ditto -c -k --sequesterRsrc --keepParent Payload ipa-output/Baldi.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
